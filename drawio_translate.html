@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Drawio Translation</title>
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <script>
+// Function to handle file upload/drop
+var xml= ""  // the main xml string (content of drawio file)
+function handleFileSelect(evt) {
+  evt.preventDefault();
+  var file = evt.dataTransfer ? evt.dataTransfer.files[0] : evt.target.files[0];
+
+  // Read the file as text
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    xml = e.target.result;  // the xml string
+  };
+  reader.readAsText(file);
+}
+
+// Function to extract information and generate the table
+function extractInformation() {
+  // Get the XML string from your storage or variable
+  var xmlString = xml; // Replace with the actual XML string
+
+  // Create a new XML document from the XML string
+  var parser = new DOMParser();
+  var xmlDoc = parser.parseFromString(xmlString, "text/xml");
+
+  // Check if the XML parsing was successful
+  if (xmlDoc.getElementsByTagName("parsererror").length > 0) {
+    alert("Invalid XML string! Please provide a valid XML.");
+    return; // Discontinue the extraction process
+  }
+
+  // Use XPath to extract the required attributes from mxCell elements
+  var xpathExpr = "//mxCell[@value!=''][@id]/@id | //mxCell[@value!=''][@id]/@value";
+  var result = xmlDoc.evaluate(xpathExpr, xmlDoc, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+
+  // Create a table and populate it with the extracted data
+  var tableBody = document.getElementById("translationTable").getElementsByTagName("tbody")[0];
+  tableBody.innerHTML = ""; // Clear the existing table rows
+
+  for (var i = 0; i < result.snapshotLength; i += 2) {
+    var id = result.snapshotItem(i).nodeValue;
+    var value = result.snapshotItem(i + 1).nodeValue;
+
+    // Create a new row and cells in the table
+    var row = tableBody.insertRow();
+    var idCell = row.insertCell();
+    var valueCell = row.insertCell();
+    var tvalueCell = row.insertCell();
+
+    // Set the values in the cells
+    idCell.textContent = id;
+    valueCell.textContent = value;
+    tvalueCell.textContent = ""; // will be populated later
+  }
+  // Reapply the contenteditable attribute to TValue cells
+  $("#translationTable td:nth-child(3)").attr("contenteditable", "true");  
+}
+
+// Function to save the generated CSV to disk
+function saveCSV() {
+  // Get the table body element
+  var tableBody = document.getElementById("translationTable").getElementsByTagName("tbody")[0];
+
+  // Create an empty array to store the CSV data
+  var csvData = [];
+
+  // Get the table headers
+  var headers = Array.from(document.querySelectorAll("#translationTable th")).map(function(header) {
+    return header.textContent;
+  });
+
+  // Push the headers as the first row in the CSV data array
+  csvData.push(headers);
+
+  // Loop through each row in the table
+  for (var i = 0; i < tableBody.rows.length; i++) {
+    var row = Array.from(tableBody.rows[i].cells).map(function(cell) {
+      return cell.textContent;
+    });
+
+    // Push the row data into the CSV data array
+    csvData.push(row);
+  }
+
+  // Convert the CSV data array to CSV content
+  var csvContent = csvData.map(function(row) {
+    return row.map(function(cell) {
+      // Quote and escape the cell value
+      return '"' + cell.replace(/"/g, '""') + '"';
+    }).join(";");
+  }).join("\n");
+
+  // Create a Blob from the CSV content
+  var blob = new Blob(["\ufeff" + csvContent], { type: "text/csv;charset=utf-8;" });
+
+  // Create a temporary download link
+  var downloadLink = document.createElement("a");
+  downloadLink.href = URL.createObjectURL(blob);
+
+  // Set the file name for the download
+  downloadLink.download = "translation.csv";
+
+  // Trigger the download
+  downloadLink.click();
+}
+// Function to load the translation from a CSV file
+function loadTranslation() {
+  var fileInput = document.createElement("input");
+  fileInput.type = "file";
+  fileInput.accept = ".csv";
+
+  // Trigger the file input dialog
+  fileInput.click();
+
+  // Handle the selected file
+  fileInput.onchange = function(event) {
+    var file = event.target.files[0];
+    var reader = new FileReader();
+
+    reader.onload = function(e) {
+      var csvContent = e.target.result;
+      var csvData = parseCSV(csvContent);
+
+      // Check if it is a valid translation file with the required columns
+      if (isValidTranslationFile(csvData)) {
+        populateTranslationTable(csvData);
+      } else {
+        alert("Invalid translation file! Please make sure the file contains 'id', 'value', and 'tvalue' columns.");
+      }
+    };
+
+    reader.readAsText(file, "UTF-8");
+  };
+}
+
+// Function to populate the translation table with the loaded translation data
+function populateTranslationTable(csvData) {
+  var tableBody = document.getElementById("translationTable").getElementsByTagName("tbody")[0];
+
+  // Clear the existing table rows
+  tableBody.innerHTML = "";
+
+  // Loop through the CSV data and populate the table
+  for (var i = 0; i < csvData.length; i++) {
+    var rowData = csvData[i];
+
+    var id = rowData.ID || "";
+    var value = rowData.Value || "";
+    var tvalue = rowData.TValue || "";
+
+    // Create a new row and cells in the table
+    var row = tableBody.insertRow();
+    var idCell = row.insertCell();
+    var valueCell = row.insertCell();
+    var tvalueCell = row.insertCell();
+
+    // Set the values in the cells
+    idCell.textContent = id;
+    valueCell.textContent = value;
+    tvalueCell.textContent = tvalue;
+  }
+  // Reapply the contenteditable attribute to TValue cells
+  $("#translationTable td:nth-child(3)").attr("contenteditable", "true");  
+}
+
+
+// Function to parse CSV content into an array of objects
+function parseCSV(csvContent) {
+  var lines = csvContent.split(/\r\n|\n/);
+  var headers = parseCSVLine(lines[0]);
+  var data = [];
+
+  for (var i = 1; i < lines.length; i++) {
+    var row = parseCSVLine(lines[i]);
+    if (row.length === headers.length) {
+      var rowData = {};
+      for (var j = 0; j < headers.length; j++) {
+        rowData[headers[j]] = row[j];
+      }
+      data.push(rowData);
+    }
+  }
+
+  return data;
+}
+
+// Function to parse a CSV line into an array of fields
+function parseCSVLine(line) {
+  var fields = [];
+  var currentField = "";
+  var withinQuotes = false;
+
+  for (var i = 0; i < line.length; i++) {
+    var char = line[i];
+
+    if (char === '"') {
+      if (withinQuotes && line[i + 1] === '"') {
+        currentField += '"';
+        i++;
+      } else {
+        withinQuotes = !withinQuotes;
+      }
+    } else if (char === ';' && !withinQuotes) {
+      fields.push(currentField);
+      currentField = "";
+    } else {
+      currentField += char;
+    }
+  }
+
+  fields.push(currentField);
+  return fields;
+}
+
+// Function to check if the CSV data is a valid translation file
+function isValidTranslationFile(csvData) {
+  var requiredColumns = ["ID", "Value", "TValue"];
+  var headers = Object.keys(csvData[0] || {});
+  
+  return requiredColumns.every(function(column) {
+    return headers.includes(column);
+  });
+}
+
+function reintegrateTranslation() {
+  // Get the XML string from your storage or variable
+  var xmlString = xml; 
+
+  // Create a new XML document from the XML string
+  var parser = new DOMParser();
+  var xmlDoc = parser.parseFromString(xmlString, "text/xml");
+
+  // Get the table body element
+  var tableBody = document.getElementById("translationTable").getElementsByTagName("tbody")[0];
+
+  // Loop through the table rows and replace the @value attributes in the XML
+  for (var i = 0; i < tableBody.rows.length; i++) {
+    var id = tableBody.rows[i].cells[0].textContent;
+    var tvalue = tableBody.rows[i].cells[2].textContent;
+    
+    // Check if tvalue is empty or contains only whitespace characters
+    if (tvalue.trim() === "") {
+      continue; // Skip this row if tvalue is empty or contains only whitespace
+    }
+
+    // Find the corresponding mxCell element with matching @id
+    var xpathExpr = "//mxCell[@id='" + id + "']";
+    var mxCellNode = xmlDoc.evaluate(xpathExpr, xmlDoc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+
+    if (mxCellNode) {
+      // Set the @value attribute of the mxCell element to the tvalue from the table
+      mxCellNode.setAttribute("value", tvalue);
+    }
+  }
+
+  // Convert the modified XML back to a string
+  var modifiedXmlString = new XMLSerializer().serializeToString(xmlDoc);
+  xml=modifiedXmlString // store it back
+}
+
+
+/// Function to save the modified drawio file
+function saveDrawio() {
+  // Get the modified XML string from your storage or variable
+  var modifiedXmlString = xml; // get it from the main store
+
+  // Create a temporary download link
+  var downloadLink = document.createElement("a");
+
+  // Prompt the user for the file name
+  var fileName = prompt("Enter a file name", "modified_drawio.xml");
+
+  if (fileName) {
+    // Set the file name for the download
+    downloadLink.download = fileName;
+
+    // Convert the modified XML string to a Blob
+    var blob = new Blob([modifiedXmlString], { type: "text/xml" });
+
+    // Check if the file name already exists
+    if (window.navigator.msSaveOrOpenBlob) {
+      // For Internet Explorer
+      window.navigator.msSaveOrOpenBlob(blob, fileName);
+    } else {
+      // For other browsers
+      // Revoke any existing object URL to release resources
+      if (downloadLink.href) {
+        URL.revokeObjectURL(downloadLink.href);
+      }
+
+      // Create a new object URL for the Blob
+      downloadLink.href = URL.createObjectURL(blob);
+
+      // Trigger the download
+      downloadLink.click();
+    }
+  }
+}
+
+
+// Function to perform translation of values into a language X
+function translateValuesToLanguageX() {
+  // Get the table body element
+  var tableBody = document.getElementById("translationTable").getElementsByTagName("tbody")[0];
+
+  // Loop through each row in the table
+  for (var i = 0; i < tableBody.rows.length; i++) {
+    var valueCell = tableBody.rows[i].cells[1];
+    var tvalueCell = tableBody.rows[i].cells[2];
+
+    var value = valueCell.textContent;
+    var translatedValue = translateToLanguageX(value);
+
+    tvalueCell.textContent = translatedValue;
+  }
+}
+
+// Function to simulate translation to a language X
+function translateToLanguageX(value) {
+  // Implement your translation logic here
+  // This is just a placeholder implementation
+  var translatedValue = value + " (Translated to X)";
+  return translatedValue;
+}
+
+  </script>
+  <style>
+    table {
+      border-collapse: collapse;
+    }
+    th, td {
+      border: 1px solid black;
+      padding: 8px;
+    }
+    td[contenteditable="true"] {
+      background-color: #f2f2f2;
+    }
+  </style>
+</head>
+<body>
+  <h1>Drawio Translation</h1>
+  GnostX GmbH, Matthias Günter, 2024, programming@gnostx.ch
+ <br>
+ <h2>Description</h2>
+ This program extracts all textual elements from mxCell in drawio and allows to translate them.
+ 
+ <h2>drawio file</h2>
+  <input type="file" id="fileInput" onchange="handleFileSelect(event)">
+  <div id="dropZone" ondrop="handleFileSelect(event)" ondragover="event.preventDefault()"></div>
+<h2>Processing</h2>
+  <button onclick="extractInformation()">Extract textual elements from drawio</button>
+  <br>
+  <button onclick="saveCSV()">Save translation table</button>  -- CSV into translation.csv
+  <br><button onclick="loadTranslation()">Load the translation table</button>  -- CSV from an indicated file.
+  <br><button onclick="reintegrateTranslation()">Reintegrate</button>  -- Reintegrates the translation into the drawio file (only translated parts)
+  <br><button onclick="saveDrawio()">Save Drawio</button>  -- saves the drawio file
+  <br><button onclick="translateValuesToLanguageX()">Translate to Language X</button>  -- not implemented yet
+<br>
+<h2>The translation table</h2>
+Editing is possible only for TValue
+  <table id="translationTable">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Value</th>
+        <th>TValue</th>
+      </tr>
+    </thead>
+    <tbody>
+      <!-- The extracted information will be populated here -->
+    </tbody>
+  </table>
+
+<script>
+  // Enable editing of TValue cells
+  window.onload = function() {
+    $("#translationTable td:nth-child(3)").attr("contenteditable", "true");
+  };
+</script>
+</body>
+</html>
